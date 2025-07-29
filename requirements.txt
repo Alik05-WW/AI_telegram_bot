@@ -1,0 +1,6 @@
+pyTelegramBotAPI
+requests
+PyMuPDF
+Pillow
+pytesseract
+python-dotenv
