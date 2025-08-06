@@ -9,6 +9,7 @@ import re
 import pytesseract
 from PIL import Image
 import io
+import psycopg2
 
 load_dotenv()
 
@@ -21,6 +22,16 @@ MODEL = "deepseek-ai/DeepSeek-R1-0528"
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# === БАЗА ДАННЫХ ===
+def get_db_connection():
+    return psycopg2.connect(
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        dbname=os.getenv("DB_NAME")
+    )
 
 # === УТИЛИТЫ ===
 def clean_response(text: str) -> str:
@@ -169,6 +180,11 @@ def handle_photo(message):
 
 @bot.message_handler(func=lambda message: True)
 def chat_with_ai(message):
+    bot.send_message(message.chat.id, chat_ai(message.text))
+
+@bot.message_handler(func=lambda message: True)
+def chat_with_ai(message):
+    save_user_message(message.from_user.id, message.text)
     bot.send_message(message.chat.id, chat_ai(message.text))
 
 if __name__ == "__main__":
