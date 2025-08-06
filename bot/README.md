@@ -8,3 +8,4 @@ Telegram-бот, который извлекает текст из PDF и дел
 git clone https://github.com/Alik05-WW/telegram-ai-bot.git
 cd telegram-ai-bot
 pip install -r requirements.txt
+pip install psycopg2
