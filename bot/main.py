@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 import requests
+import platform
 import fitz
 from dotenv import load_dotenv
 import os
@@ -10,6 +11,7 @@ import pytesseract
 from PIL import Image
 import io
 import psycopg2
+from psycopg2.extras import DictCursor
 
 load_dotenv()
 
@@ -19,7 +21,18 @@ AI_API_KEY = os.getenv("AI_API_KEY")
 AI_URL = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+tess_cmd = os.getenv('TESSERACT_CMD')
+
+if tess_cmd and os.path.exists(tess_cmd):
+    pytesseract.pytesseract.tesseract_cmd = tess_cmd
+else:
+    if platform.system() == "Windows":
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    else:
+        pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract' #для Docker(LINUX)
+
+print("Используемый путь Tesseract:", pytesseract.pytesseract.tesseract_cmd)
+
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -30,8 +43,50 @@ def get_db_connection():
         port=os.getenv("DB_PORT"),
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
-        dbname=os.getenv("DB_NAME")
+        dbname=os.getenv("DB_NAME"),
+        cursor_factory=DictCursor
     )
+
+def save_user_message(telegram_id, username, first_name, last_name, message_text):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # Добавляем или обновляем пользователя
+    cur.execute("""
+        INSERT INTO users (telegram_id, username, first_name, last_name)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (telegram_id) DO UPDATE
+        SET username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name
+        RETURNING id
+    """, (telegram_id, username, first_name, last_name))
+    user_id = cur.fetchone()[0]
+
+    # Добавляем сообщение пользователя
+    cur.execute("""
+        INSERT INTO user_messages (user_id, message_text)
+        VALUES (%s, %s)
+        RETURNING id
+    """, (user_id, message_text))
+    message_id = cur.fetchone()[0]
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return message_id
+
+def save_bot_response(user_message_id, response_text):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO bot_responses (user_message_id, response_text) VALUES (%s, %s)",
+        (user_message_id, response_text)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # === УТИЛИТЫ ===
 def clean_response(text: str) -> str:
@@ -179,13 +234,24 @@ def handle_photo(message):
             os.remove("temp_photo.png")
 
 @bot.message_handler(func=lambda message: True)
-def chat_with_ai(message):
-    bot.send_message(message.chat.id, chat_ai(message.text))
+def handle_message(message):
+    # Сохраняем сообщение пользователя
+    user_message_id = save_user_message(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+        message_text=message.text
+    )
 
-@bot.message_handler(func=lambda message: True)
-def chat_with_ai(message):
-    save_user_message(message.from_user.id, message.text)
-    bot.send_message(message.chat.id, chat_ai(message.text))
+    # Получаем ответ ИИ
+    ai_reply = chat_ai(message.text)
+
+    # Отправляем ответ пользователю
+    bot.send_message(message.chat.id, ai_reply)
+
+    # Сохраняем ответ бота
+    save_bot_response(user_message_id, ai_reply)
 
 if __name__ == "__main__":
     print("Бот запущен.")

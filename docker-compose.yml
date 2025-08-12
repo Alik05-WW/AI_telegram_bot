@@ -1,8 +1,19 @@
-version: '3.8'
+version: "3.9"
 
 services:
+  bot:
+    build: .
+    container_name: telegram_bot
+    env_file:
+      - ./bot/.env
+    depends_on:
+      - db
+    networks:
+      - botnet
+
   db:
-    image: postgres:15
+    image: postgres:16
+    container_name: ai_telegram_bot-db-1
     restart: always
     environment:
       POSTGRES_USER: user
@@ -12,17 +23,13 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/migrations
+    networks:
+      - botnet
 
-  bot:
-    build: .
-    command: python bot/main.py
-    volumes:
-      - .:/app
-    working_dir: /app
-    env_file:
-      - bot/.env
-    depends_on:
-      - db
+networks:
+  botnet:
+    driver: bridge
 
 volumes:
   postgres_data:
