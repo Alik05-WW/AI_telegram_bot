@@ -1,26 +1,27 @@
-import telebot
-from telebot import types
-import requests
-import platform
-import fitz
-from dotenv import load_dotenv
-import os
-import json
-import re
-import pytesseract
-from PIL import Image
-import io
-import psycopg2
-from psycopg2.extras import DictCursor
+import telebot                 # Работа с Telegram API через pyTelegramBotAPI
+from telebot import types      # Для кнопок и клавиатур
+import requests                # Для HTTP-запросов (вызовы AI API)
+import platform                # Определение ОС (Windows/Linux)
+import fitz                    # Библиотека PyMuPDF для чтения PDF
+from dotenv import load_dotenv # Для загрузки переменных из .env
+import os                      # OS — работа с путями/переменными
+import json                    # json — форматирование
+import re                      # re — регулярки
+import pytesseract             # OCR для распознавания текста
+from PIL import Image          # Работа с изображениями
+import io                      # Для работы с байтами (BytesIO)
+import psycopg2                # Подключение к PostgreSQL
+from psycopg2.extras import DictCursor  # Курсор, возвращающий dict
 
-load_dotenv()
+load_dotenv() # Загружает переменные из .env
 
-# === КОНФИГ ===
+# === КОНФИГ === Читаешь токены из .env и задаёшь параметры для работы с ИИ.
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 AI_API_KEY = os.getenv("AI_API_KEY")
 AI_URL = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 MODEL = "deepseek-ai/DeepSeek-R1-0528"
 
+# Определяется путь до Tesseract OCR — либо из .env, либо стандартный для Windows/Linux.
 tess_cmd = os.getenv('TESSERACT_CMD')
 
 if tess_cmd and os.path.exists(tess_cmd):
@@ -33,10 +34,10 @@ else:
 
 print("Используемый путь Tesseract:", pytesseract.pytesseract.tesseract_cmd)
 
-
+# Объект bot — это твой Telegram-бот, с помощью которого можно отправлять/получать сообщения.
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# === БАЗА ДАННЫХ ===
+# === БАЗА ДАННЫХ === Создаётся подключение к PostgreSQL, параметры тоже читаются из .env
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -47,6 +48,7 @@ def get_db_connection():
         cursor_factory=DictCursor
     )
 
+# Функция добавляет нового пользователя или обновляет его данные, а затем сохраняет его сообщение.
 def save_user_message(telegram_id, username, first_name, last_name, message_text):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -77,6 +79,7 @@ def save_user_message(telegram_id, username, first_name, last_name, message_text
 
     return message_id
 
+# Сохраняет, что бот ответил на конкретное сообщение.
 def save_bot_response(user_message_id, response_text):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -89,11 +92,13 @@ def save_bot_response(user_message_id, response_text):
     conn.close()
 
 # === УТИЛИТЫ ===
+# Иногда AI возвращает лишние элементы — они убираются.
 def clean_response(text: str) -> str:
     text = re.sub(r"</?think>", "", text)
     text = re.sub(r"\([^)]*\)", "", text)
     return text.strip()
 
+# Передаёт текст в ИИ и получает краткий ответ.
 def chat_ai(prompt):
     headers = {
         "Content-Type": "application/json; charset=utf-8",
@@ -119,6 +124,7 @@ def chat_ai(prompt):
     except Exception as e:
         return f"Ошибка LLM: {e}"
 
+# Используется, если PDF — это отсканированные изображения без текста.
 def ocr_from_pdf(path):
     """Если в PDF нет текста, извлекаем через OCR"""
     doc = fitz.open(path)
@@ -131,6 +137,7 @@ def ocr_from_pdf(path):
         result_text += ocr_text + "\n"
     return result_text
 
+# Пытается получить обычный текст из PDF, если пусто — использует OCR
 def get_pdf_text(path):
     """Извлекает текст из PDF, если нет текста, использует OCR."""
     text = ""
@@ -142,12 +149,12 @@ def get_pdf_text(path):
         text = ocr_from_pdf(path)
     return text
 
-def get_summary(text):
+def get_summary(text): # Передаёт текст в ИИ для получения краткого изложения.
     """Краткое изложение текста."""
     return chat_ai(f"Сделай краткое изложение текста:\n{text[:4000]}")
 
 # === ОБРАБОТЧИКИ ===
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start']) # приветствие, клавиатура.
 def start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("Инфо", "Помощь")
@@ -157,7 +164,7 @@ def start(message):
         reply_markup=markup
     )
 
-@bot.message_handler(commands=['help'])
+@bot.message_handler(commands=['help']) # список команд.
 def help_command(message):
     bot.send_message(
         message.chat.id,
@@ -169,7 +176,7 @@ def help_command(message):
         "Также можешь написать сообщение для общения с ИИ."
     )
 
-@bot.message_handler(commands=['info'])
+@bot.message_handler(commands=['info']) # выводит username и ID пользователя.
 def info_command(message):
     bot.send_message(
         message.chat.id,
@@ -177,7 +184,7 @@ def info_command(message):
         f"ID: {message.from_user.id}"
     )
 
-@bot.message_handler(content_types=['document'])
+@bot.message_handler(content_types=['document']) # # Если это PDF — скачиваем, извлекаем текст, делаем краткое изложение
 def handle_pdf(message):
     if not message.document.file_name.lower().endswith('.pdf'):
         bot.send_message(message.chat.id, "Отправь PDF файл.")
@@ -204,7 +211,7 @@ def button_info(message):
 def button_help(message):
     help_command(message)
 
-@bot.message_handler(content_types=['photo'])
+@bot.message_handler(content_types=['photo'])  # Скачиваем фото, распознаём текст, делаем краткое изложение
 def handle_photo(message):
     try:
         bot.send_message(message.chat.id, "Распознаю текст на изображении...")
@@ -253,6 +260,7 @@ def handle_message(message):
     # Сохраняем ответ бота
     save_bot_response(user_message_id, ai_reply)
 
+# Запускает бота в бесконечном режиме.
 if __name__ == "__main__":
     print("Бот запущен.")
     bot.polling(none_stop=True)
